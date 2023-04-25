@@ -6,16 +6,20 @@ import {
 } from '@nestjs/common';
 import { hash, genSalt } from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
+import { plainToInstance } from 'class-transformer';
 
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { CreateUserDto } from './dto/createUser.dto';
+import { UpdateUserDto } from './dto/updateUser.dto';
 import { User } from './entities/user.entity';
+import { UserDto } from './dto/user.dto';
+import checkPasswordStrength from '../common/utils/checkPasswordStrength';
+import { FindByNameOrEmailDto } from './dto/findByNameOrEmail.dto';
 
 @Injectable()
 export class UserService {
   public users: User[] = [];
 
-  async create(createUserDto: CreateUserDto) {
+  async create(createUserDto: CreateUserDto): Promise<UserDto> {
     const { username, password, email, firstName, lastName } = createUserDto;
     if (!username) {
       throw new BadRequestException('Username is required');
@@ -33,24 +37,45 @@ export class UserService {
       throw new BadRequestException('Last name is required');
     }
 
+    if (!checkPasswordStrength(password)) {
+      throw new BadRequestException(
+        'Your password should contain at upper case and lower case letters, numbers and symbols.',
+      );
+    }
+
+    const userFound = this.findByNameOrEmail({ username, email });
+
+    if (userFound && userFound.email === email) {
+      throw new BadRequestException('Email already in use.');
+    }
+
+    if (userFound && userFound.username === username) {
+      throw new BadRequestException('Username already in use.');
+    }
+
+    const user = new User();
+
     const salt = await genSalt();
     const hashedPassword = await hash(password, salt);
 
-    const user = {
-      ...createUserDto,
-      id: uuidv4(),
-      salt: salt,
-      password: hashedPassword,
-      active: true,
-    };
+    user.id = uuidv4();
+    user.username = username;
+    user.password = password;
+    user.email = email;
+    user.firstName = firstName;
+    user.lastName = lastName;
+    user.salt = salt;
+    user.password = hashedPassword;
+    user.active = true;
 
     this.users.push(user);
 
-    return user;
+    return plainToInstance(UserDto, user);
   }
 
-  findAll(): User[] {
-    return this.users;
+  findAll(): UserDto[] {
+    const users = this.users;
+    return plainToInstance(UserDto, users);
   }
 
   findOne(@Param(':id') id: string) {
@@ -59,6 +84,15 @@ export class UserService {
     if (!user) {
       throw new NotFoundException('User not found.');
     }
+
+    return user;
+  }
+
+  findByNameOrEmail(findByNameOrEmailDto: FindByNameOrEmailDto) {
+    const { email, username } = findByNameOrEmailDto;
+    const user = this.users.find(
+      (u) => u.email === email || u.username === username,
+    );
 
     return user;
   }
